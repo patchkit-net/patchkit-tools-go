@@ -36,17 +36,18 @@ func (f IntOrFalse) MarshalJSON() ([]byte, error) {
 
 // App represents a PatchKit application.
 type App struct {
-	ID                  int            `json:"id"`
-	Name                string         `json:"name"`
-	Secret              string         `json:"secret"`
-	Platform            string         `json:"platform"`
-	IsChannel           bool           `json:"is_channel"`
-	DiffAlgorithm       string         `json:"diff_algorithm"`
-	ProcessingVersion   IntOrFalse     `json:"processing_version"`
-	PublishingVersion   IntOrFalse     `json:"publishing_version"`
-	ParentGroup         *ParentGroup   `json:"parent_group,omitempty"`
-	PublishedVersions   int            `json:"published_versions_count"`
-	DraftVersions       int            `json:"draft_versions_count"`
+	ID                         int            `json:"id"`
+	Name                       string         `json:"name"`
+	Secret                     string         `json:"secret"`
+	Platform                   string         `json:"platform"`
+	IsChannel                  bool           `json:"is_channel"`
+	AllowChannelDirectPublish  bool           `json:"allow_channel_direct_publish"`
+	DiffAlgorithm              string         `json:"diff_algorithm"`
+	ProcessingVersion          IntOrFalse     `json:"processing_version"`
+	PublishingVersion          IntOrFalse     `json:"publishing_version"`
+	ParentGroup                *ParentGroup   `json:"parent_group,omitempty"`
+	PublishedVersions          int            `json:"published_versions_count"`
+	DraftVersions              int            `json:"draft_versions_count"`
 }
 
 // ParentGroup represents the parent group of a channel app.

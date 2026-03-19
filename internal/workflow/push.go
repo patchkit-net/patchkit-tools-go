@@ -90,6 +90,13 @@ func Push(ctx context.Context, cfg *PushConfig, statusFn StatusFn) (*PushResult,
 		return nil, fmt.Errorf("getting app info: %w", err)
 	}
 
+	// Block direct uploads to channel apps unless the API grants permission.
+	// Channel apps normally receive content via linking to a group version.
+	if app.IsChannel && !app.AllowChannelDirectPublish {
+		return nil, fmt.Errorf("cannot upload directly to a channel app. " +
+			"Use 'pkt channel push' to link to a group version, or contact support to enable direct channel uploads")
+	}
+
 	versions, err := cfg.Client.GetVersions(ctx, cfg.AppSecret)
 	if err != nil {
 		return nil, fmt.Errorf("listing versions: %w", err)
