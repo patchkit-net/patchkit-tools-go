@@ -1,6 +1,7 @@
 package pack1
 
 import (
+	"bytes"
 	"compress/gzip"
 	"crypto/aes"
 	"crypto/cipher"
@@ -214,6 +215,119 @@ func (p *Packer) PackFiles(entries map[string]string, archivePath, metadataPath 
 		ArchivePath:  archivePath,
 		MetadataPath: metadataPath,
 		Metadata:     meta,
+	}, nil
+}
+
+// DeltaEntry holds the data for a single diff archive entry.
+// Exactly one of FilePath or Data is set.
+type DeltaEntry struct {
+	FilePath string
+	Data     []byte
+	Mode     os.FileMode
+}
+
+// PackDeltaEntries creates a Pack1 archive from DeltaEntry sources.
+// Entries with Data set are written from memory; entries with FilePath are read from disk.
+func (p *Packer) PackDeltaEntries(entries map[string]DeltaEntry, archivePath, metadataPath string) (*Result, error) {
+	archiveFile, err := os.Create(archivePath)
+	if err != nil {
+		return nil, err
+	}
+	defer archiveFile.Close()
+
+	if _, err := archiveFile.Write(magic); err != nil {
+		return nil, err
+	}
+
+	meta := &Metadata{
+		Version:     "1.1",
+		Encryption:  "aes",
+		Compression: "gzip",
+		IV:          base64.StdEncoding.EncodeToString(p.iv),
+	}
+
+	for entryName, entry := range entries {
+		var fe *FileEntry
+		if entry.Data != nil {
+			fe, err = p.packReader(archiveFile, bytes.NewReader(entry.Data), entryName, entry.Mode)
+		} else {
+			info, statErr := os.Stat(entry.FilePath)
+			if statErr != nil {
+				return nil, statErr
+			}
+			fe, err = p.packFile(archiveFile, entry.FilePath, entryName, info)
+		}
+		if err != nil {
+			return nil, err
+		}
+		meta.Files = append(meta.Files, *fe)
+	}
+
+	metaJSON, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(metadataPath, metaJSON, 0644); err != nil {
+		return nil, err
+	}
+
+	return &Result{
+		ArchivePath:  archivePath,
+		MetadataPath: metadataPath,
+		Metadata:     meta,
+	}, nil
+}
+
+func (p *Packer) packReader(w io.Writer, src io.Reader, entryName string, mode os.FileMode) (*FileEntry, error) {
+	startOffset := p.offset
+	var totalUncompressed int64
+
+	block, err := aes.NewCipher(p.key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	cw := &countingWriter{w: w}
+	stream := cipher.NewCBCEncrypter(block, p.iv)
+	encWriter := &cbcWriter{w: cw, block: stream, blockSize: aes.BlockSize}
+
+	gzWriter := gzip.NewWriter(encWriter)
+
+	buf := make([]byte, bufferSize)
+	for {
+		n, readErr := src.Read(buf)
+		if n > 0 {
+			totalUncompressed += int64(n)
+			if _, err := gzWriter.Write(buf[:n]); err != nil {
+				return nil, err
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+	}
+
+	if err := gzWriter.Close(); err != nil {
+		return nil, err
+	}
+
+	if err := encWriter.Close(); err != nil {
+		return nil, err
+	}
+
+	encryptedSize := cw.count
+	p.offset += int64(encryptedSize)
+
+	return &FileEntry{
+		Name:   entryName,
+		Type:   "regular",
+		Mode:   fmt.Sprintf("%o", mode),
+		Offset: startOffset,
+		Size:   int64(encryptedSize),
+		USize:  totalUncompressed,
 	}, nil
 }
 

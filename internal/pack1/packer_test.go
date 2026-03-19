@@ -180,6 +180,99 @@ func sprintf02x(b byte) string {
 	return string([]byte{hex[b>>4], hex[b&0x0f]})
 }
 
+// TestPackDeltaEntries verifies that PackDeltaEntries correctly handles both
+// file-based and in-memory entries, and that in-memory data round-trips
+// through gzip+AES encryption correctly.
+func TestPackDeltaEntries(t *testing.T) {
+	memContent := []byte("in-memory delta data for pack1 encryption round-trip test")
+	fileContent := []byte("file-based content for pack1 test")
+
+	// Create a file on disk for the file-based entry
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "on_disk.bin")
+	os.WriteFile(filePath, fileContent, 0644)
+
+	entries := map[string]DeltaEntry{
+		"from_memory.bin": {Data: memContent, Mode: 0644},
+		"from_disk.bin":   {FilePath: filePath, Mode: 0644},
+	}
+
+	encKey := EncryptionKey("test-secret", 42)
+	packer, err := NewPacker(encKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	outDir := t.TempDir()
+	archivePath := filepath.Join(outDir, "test.pack1")
+	metaPath := filepath.Join(outDir, "test.pack1.meta")
+
+	result, err := packer.PackDeltaEntries(entries, archivePath, metaPath)
+	if err != nil {
+		t.Fatalf("PackDeltaEntries() error: %v", err)
+	}
+
+	if len(result.Metadata.Files) != 2 {
+		t.Fatalf("expected 2 file entries, got %d", len(result.Metadata.Files))
+	}
+
+	// Decrypt each entry and verify content
+	aesKey := sha256.Sum256([]byte(encKey))
+	iv, err := base64.StdEncoding.DecodeString(result.Metadata.IV)
+	if err != nil {
+		t.Fatalf("decode IV: %v", err)
+	}
+
+	archiveData, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, entry := range result.Metadata.Files {
+		encrypted := archiveData[entry.Offset : entry.Offset+entry.Size]
+
+		block, err := aes.NewCipher(aesKey[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		decrypter := cipher.NewCBCDecrypter(block, iv)
+		decrypted := make([]byte, len(encrypted))
+		decrypter.CryptBlocks(decrypted, encrypted)
+
+		// Remove PKCS7 padding
+		padLen := int(decrypted[len(decrypted)-1])
+		if padLen > aes.BlockSize || padLen == 0 {
+			t.Fatalf("invalid padding for %s: %d", entry.Name, padLen)
+		}
+		decrypted = decrypted[:len(decrypted)-padLen]
+
+		// Gzip decompress
+		gz, err := gzip.NewReader(bytes.NewReader(decrypted))
+		if err != nil {
+			t.Fatalf("gzip reader for %s: %v", entry.Name, err)
+		}
+		decompressed, err := io.ReadAll(gz)
+		gz.Close()
+		if err != nil {
+			t.Fatalf("gzip read for %s: %v", entry.Name, err)
+		}
+
+		var wantContent []byte
+		switch entry.Name {
+		case "from_memory.bin":
+			wantContent = memContent
+		case "from_disk.bin":
+			wantContent = fileContent
+		default:
+			t.Fatalf("unexpected entry: %s", entry.Name)
+		}
+
+		if !bytes.Equal(decompressed, wantContent) {
+			t.Errorf("%s: decrypted = %q, want %q", entry.Name, decompressed, wantContent)
+		}
+	}
+}
+
 // TestRubyCompatibility_packAndDecrypt packs a file using EncryptionKey and
 // verifies it can be decrypted using the same key derivation that Ruby uses
 // (single SHA256 of the raw key string). This proves the Go packer produces

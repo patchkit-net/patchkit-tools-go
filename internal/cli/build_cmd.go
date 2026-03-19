@@ -70,8 +70,6 @@ func newBuildDiffCmd() *cobra.Command {
 				return fmt.Errorf("extracting signatures: %w", err)
 			}
 
-			deltaDir := filepath.Join(tmpDir, "deltas")
-
 			// Load previous hashes if provided
 			var prevHashes map[string]string
 			if hashesFile != "" {
@@ -97,7 +95,6 @@ func newBuildDiffCmd() *cobra.Command {
 			result, err := diff.Run(ac.ctx, &diff.Config{
 				ContentDir:     filesDir,
 				SignaturesDir:  sigsDir,
-				OutputDir:      deltaDir,
 				TempDir:        tmpDir,
 				Algorithm:      deltaAlgorithm,
 				Workers:        threads,
@@ -110,6 +107,14 @@ func newBuildDiffCmd() *cobra.Command {
 				return fmt.Errorf("diff pipeline: %w", err)
 			}
 
+			// Convert diff entries for packers
+			pack1Entries := make(map[string]pack1.DeltaEntry, len(result.DeltaFiles))
+			contentEntries := make(map[string]content.DeltaEntry, len(result.DeltaFiles))
+			for name, de := range result.DeltaFiles {
+				pack1Entries[name] = pack1.DeltaEntry{FilePath: de.FilePath, Data: de.Data, Mode: de.Mode}
+				contentEntries[name] = content.DeltaEntry{FilePath: de.FilePath, Data: de.Data, Mode: de.Mode}
+			}
+
 			// Package results
 			switch packaging {
 			case "pack1":
@@ -118,7 +123,7 @@ func newBuildDiffCmd() *cobra.Command {
 					return err
 				}
 				metaPath := output + ".meta"
-				_, err = packer.PackFiles(result.DeltaFiles, output, metaPath)
+				_, err = packer.PackDeltaEntries(pack1Entries, output, metaPath)
 				if err != nil {
 					return fmt.Errorf("pack1 packaging: %w", err)
 				}
@@ -126,7 +131,7 @@ func newBuildDiffCmd() *cobra.Command {
 				ac.out.Info(fmt.Sprintf("Pack1 metadata: %s", metaPath))
 			default:
 				p := content.NewPackager()
-				if err := p.PackFiles(result.DeltaFiles, output); err != nil {
+				if err := p.PackDeltaEntries(contentEntries, output); err != nil {
 					return fmt.Errorf("zip packaging: %w", err)
 				}
 			}

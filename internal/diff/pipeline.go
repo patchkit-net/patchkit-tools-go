@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -26,10 +27,8 @@ type Config struct {
 	// SignaturesDir is the directory containing the previous version's signatures.
 	SignaturesDir string
 
-	// OutputDir is the directory where delta files will be written.
-	OutputDir string
-
-	// TempDir is a directory for temporary files during delta computation.
+	// TempDir is a directory for temporary files during delta computation
+	// (used by turbopatch for intermediate signatures).
 	TempDir string
 
 	// Algorithm specifies the delta algorithm to use.
@@ -46,18 +45,34 @@ type Config struct {
 	ProgressFn ProgressFn
 }
 
+// DeltaEntry holds the data for a single entry in the diff archive.
+// Exactly one of FilePath or Data is set.
+type DeltaEntry struct {
+	// FilePath is set for added files — points to the original content file on disk.
+	FilePath string
+
+	// Data is set for modified files — contains the delta bytes in memory.
+	Data []byte
+
+	// Mode is the file permission mode of the source file.
+	Mode os.FileMode
+}
+
 // Result contains the diff pipeline output.
 type Result struct {
 	// Summary describes the file changes.
 	Summary *Summary
 
-	// DeltaFiles maps relative file paths to their delta file paths in OutputDir.
-	// For added files, the value is the original content file path.
-	// For modified files with no changes (unchanged), no entry exists.
-	DeltaFiles map[string]string
+	// DeltaFiles maps relative file paths to their DeltaEntry.
+	// For added files, FilePath points to the original content.
+	// For modified files, Data contains the in-memory delta.
+	// Unchanged files have no entry.
+	DeltaFiles map[string]DeltaEntry
 }
 
 // Run executes the diff pipeline.
+// Deltas for modified files are computed in parallel and stored in memory,
+// avoiding temporary files on disk (which can be corrupted by AV software).
 func Run(ctx context.Context, cfg *Config) (*Result, error) {
 	// List content files
 	contentFiles, err := listRelativeFiles(cfg.ContentDir)
@@ -93,29 +108,33 @@ func Run(ctx context.Context, cfg *Config) (*Result, error) {
 	sort.Strings(modified)
 	sort.Strings(removed)
 
-	// Create output directory
-	if err := os.MkdirAll(cfg.OutputDir, 0755); err != nil {
-		return nil, err
-	}
-
-	deltaFiles := make(map[string]string)
+	deltaFiles := make(map[string]DeltaEntry)
 	var unchangedFiles []string
 	totalFiles := len(added) + len(modified)
 	processed := 0
 
-	// Process added files - just reference the original content
+	// Process added files - reference the original content on disk
 	for _, f := range added {
-		deltaFiles[f] = filepath.Join(cfg.ContentDir, filepath.FromSlash(f))
+		contentPath := filepath.Join(cfg.ContentDir, filepath.FromSlash(f))
+		info, err := os.Stat(contentPath)
+		if err != nil {
+			return nil, fmt.Errorf("stat added file %s: %w", f, err)
+		}
+		deltaFiles[f] = DeltaEntry{
+			FilePath: contentPath,
+			Mode:     info.Mode(),
+		}
 		processed++
 		if cfg.ProgressFn != nil {
 			cfg.ProgressFn(processed, totalFiles, f)
 		}
 	}
 
-	// Process modified files in parallel
+	// Process modified files in parallel — deltas go to memory
 	type deltaResult struct {
 		file      string
-		deltaPath string
+		data      []byte
+		mode      os.FileMode
 		unchanged bool
 	}
 
@@ -154,19 +173,19 @@ func Run(ctx context.Context, cfg *Config) (*Result, error) {
 				}
 			}
 
-			// Compute delta
-			deltaPath := filepath.Join(cfg.OutputDir, filepath.FromSlash(f)+".delta")
-
-			// Ensure parent directory exists
-			if err := os.MkdirAll(filepath.Dir(deltaPath), 0755); err != nil {
-				return err
+			// Get source file mode for metadata
+			info, err := os.Stat(contentPath)
+			if err != nil {
+				return fmt.Errorf("stat %s: %w", f, err)
 			}
 
-			if err := deltaBuilder.BuildDelta(sigPath, contentPath, deltaPath); err != nil {
+			// Compute delta to in-memory buffer
+			var buf bytes.Buffer
+			if err := deltaBuilder.BuildDeltaToWriter(sigPath, contentPath, &buf); err != nil {
 				return fmt.Errorf("building delta for %s: %w", f, err)
 			}
 
-			results <- deltaResult{file: f, deltaPath: deltaPath}
+			results <- deltaResult{file: f, data: buf.Bytes(), mode: info.Mode()}
 			return nil
 		})
 	}
@@ -181,7 +200,10 @@ func Run(ctx context.Context, cfg *Config) (*Result, error) {
 		if dr.unchanged {
 			unchangedFiles = append(unchangedFiles, dr.file)
 		} else {
-			deltaFiles[dr.file] = dr.deltaPath
+			deltaFiles[dr.file] = DeltaEntry{
+				Data: dr.data,
+				Mode: dr.mode,
+			}
 		}
 		processed++
 		if cfg.ProgressFn != nil {

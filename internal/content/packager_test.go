@@ -73,6 +73,55 @@ func TestPackFiles(t *testing.T) {
 	}
 }
 
+func TestPackDeltaEntries(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a file on disk for file-based entry
+	filePath := filepath.Join(tmpDir, "on_disk.txt")
+	os.WriteFile(filePath, []byte("content from disk"), 0644)
+
+	// Create entries mixing file-based and in-memory
+	entries := map[string]DeltaEntry{
+		"from_disk.txt": {
+			FilePath: filePath,
+			Mode:     0644,
+		},
+		"from_memory.txt": {
+			Data: []byte("content from memory buffer"),
+			Mode: 0644,
+		},
+	}
+
+	outputPath := filepath.Join(t.TempDir(), "output.zip")
+	p := NewPackager()
+	err := p.PackDeltaEntries(entries, outputPath)
+	if err != nil {
+		t.Fatalf("PackDeltaEntries() error: %v", err)
+	}
+
+	// Verify ZIP contents
+	zr, err := zip.OpenReader(outputPath)
+	if err != nil {
+		t.Fatalf("failed to open ZIP: %v", err)
+	}
+	defer zr.Close()
+
+	if len(zr.File) != 2 {
+		t.Errorf("expected 2 files, got %d", len(zr.File))
+	}
+
+	fileNames := make(map[string]bool)
+	for _, f := range zr.File {
+		fileNames[f.Name] = true
+	}
+	if !fileNames["from_disk.txt"] {
+		t.Error("missing from_disk.txt in ZIP")
+	}
+	if !fileNames["from_memory.txt"] {
+		t.Error("missing from_memory.txt in ZIP")
+	}
+}
+
 func TestListFiles(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "a", "b"), 0755)

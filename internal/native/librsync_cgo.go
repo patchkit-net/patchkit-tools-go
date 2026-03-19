@@ -15,6 +15,8 @@ import "C"
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"unsafe"
 )
 
@@ -55,4 +57,28 @@ func (r *CGoRsync) Delta(sigPath, newFilePath, deltaOutputPath string) error {
 		return fmt.Errorf("rs_rdiff_delta failed with code %d", result)
 	}
 	return nil
+}
+
+func (r *CGoRsync) DeltaToWriter(sigPath, newFilePath string, out io.Writer) error {
+	// CGo bindings require file paths, so use a temp file and copy to writer.
+	tmpFile, err := os.CreateTemp("", "pkt-delta-*")
+	if err != nil {
+		return fmt.Errorf("creating temp file for delta: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
+
+	if err := r.Delta(sigPath, newFilePath, tmpPath); err != nil {
+		return err
+	}
+
+	f, err := os.Open(tmpPath)
+	if err != nil {
+		return fmt.Errorf("reading delta temp file: %w", err)
+	}
+	defer f.Close()
+
+	_, err = io.Copy(out, f)
+	return err
 }

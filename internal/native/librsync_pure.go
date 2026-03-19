@@ -3,6 +3,7 @@
 package native
 
 import (
+	"io"
 	"os"
 
 	"github.com/balena-os/librsync-go"
@@ -38,6 +39,16 @@ func (r *PureGoRsync) Signature(filePath, sigOutputPath string, blockLen int) er
 }
 
 func (r *PureGoRsync) Delta(sigPath, newFilePath, deltaOutputPath string) error {
+	outFile, err := os.Create(deltaOutputPath)
+	if err != nil {
+		return err
+	}
+	defer outFile.Close()
+
+	return r.DeltaToWriter(sigPath, newFilePath, outFile)
+}
+
+func (r *PureGoRsync) DeltaToWriter(sigPath, newFilePath string, out io.Writer) error {
 	sig, err := librsync.ReadSignatureFile(sigPath)
 	if err != nil {
 		return err
@@ -49,11 +60,5 @@ func (r *PureGoRsync) Delta(sigPath, newFilePath, deltaOutputPath string) error 
 	}
 	defer newFile.Close()
 
-	outFile, err := os.Create(deltaOutputPath)
-	if err != nil {
-		return err
-	}
-	defer outFile.Close()
-
-	return librsync.Delta(sig, newFile, outFile)
+	return librsync.Delta(sig, newFile, out)
 }

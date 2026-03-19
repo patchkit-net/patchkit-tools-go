@@ -345,12 +345,10 @@ func pushDiff(ctx context.Context, cfg *PushConfig, app *api.App, versionID int,
 	}
 
 	// Run diff pipeline
-	deltaDir := filepath.Join(tmpDir, "deltas")
 	status("Computing diff...")
 	diffResult, err := diff.Run(ctx, &diff.Config{
 		ContentDir:     cfg.FilesDir,
 		SignaturesDir:  sigsDir,
-		OutputDir:      deltaDir,
 		TempDir:        tmpDir,
 		Algorithm:      algorithm,
 		Workers:        cfg.DiffThreads,
@@ -373,6 +371,14 @@ func pushDiff(ctx context.Context, cfg *PushConfig, app *api.App, versionID int,
 		return "", fmt.Errorf("calculating content dir size: %w", err)
 	}
 
+	// Convert diff entries for packers
+	pack1Entries := make(map[string]pack1.DeltaEntry, len(diffResult.DeltaFiles))
+	contentEntries := make(map[string]content.DeltaEntry, len(diffResult.DeltaFiles))
+	for name, de := range diffResult.DeltaFiles {
+		pack1Entries[name] = pack1.DeltaEntry{FilePath: de.FilePath, Data: de.Data, Mode: de.Mode}
+		contentEntries[name] = content.DeltaEntry{FilePath: de.FilePath, Data: de.Data, Mode: de.Mode}
+	}
+
 	// Package diff
 	var archivePaths []string
 	var pack1SHA1 string
@@ -387,7 +393,7 @@ func pushDiff(ctx context.Context, cfg *PushConfig, app *api.App, versionID int,
 			return "", fmt.Errorf("creating packer: %w", err)
 		}
 
-		_, err = packer.PackFiles(diffResult.DeltaFiles, archivePath, metaPath)
+		_, err = packer.PackDeltaEntries(pack1Entries, archivePath, metaPath)
 		if err != nil {
 			return "", fmt.Errorf("pack1 packaging: %w", err)
 		}
@@ -405,7 +411,7 @@ func pushDiff(ctx context.Context, cfg *PushConfig, app *api.App, versionID int,
 	} else {
 		archivePath := filepath.Join(tmpDir, "diff.zip")
 		packager := content.NewPackager()
-		if err := packager.PackFiles(diffResult.DeltaFiles, archivePath); err != nil {
+		if err := packager.PackDeltaEntries(contentEntries, archivePath); err != nil {
 			return "", fmt.Errorf("zip packaging: %w", err)
 		}
 		archivePaths = []string{archivePath}

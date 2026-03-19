@@ -2,10 +2,12 @@ package content
 
 import (
 	"archive/zip"
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const defaultCompressionLevel = 2
@@ -91,6 +93,67 @@ func (p *Packager) PackFiles(entries map[string]string, outputPath string) error
 	}
 
 	return nil
+}
+
+// DeltaEntry holds the data for a single diff archive entry.
+// Exactly one of FilePath or Data is set.
+type DeltaEntry struct {
+	FilePath string
+	Data     []byte
+	Mode     os.FileMode
+}
+
+// PackDeltaEntries creates a ZIP archive from DeltaEntry sources.
+// Entries with Data set are written from memory; entries with FilePath are read from disk.
+func (p *Packager) PackDeltaEntries(entries map[string]DeltaEntry, outputPath string) error {
+	outFile, err := os.Create(outputPath)
+	if err != nil {
+		return err
+	}
+	defer outFile.Close()
+
+	zw := zip.NewWriter(outFile)
+	defer zw.Close()
+
+	zw.RegisterCompressor(zip.Deflate, func(w io.Writer) (io.WriteCloser, error) {
+		return newFlateWriter(w, p.compressionLevel)
+	})
+
+	for entryName, entry := range entries {
+		if entry.Data != nil {
+			if err := p.addFromMemory(zw, entryName, entry.Data, entry.Mode); err != nil {
+				return err
+			}
+		} else {
+			info, err := os.Stat(entry.FilePath)
+			if err != nil {
+				return err
+			}
+			if err := p.addFile(zw, entry.FilePath, entryName, info); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (p *Packager) addFromMemory(zw *zip.Writer, entryName string, data []byte, mode os.FileMode) error {
+	header := &zip.FileHeader{
+		Name:               entryName,
+		Method:             zip.Deflate,
+		Modified:           time.Now(),
+		UncompressedSize64: uint64(len(data)),
+	}
+	header.SetMode(mode)
+
+	w, err := zw.CreateHeader(header)
+	if err != nil {
+		return err
+	}
+
+	_, err = io.Copy(w, bytes.NewReader(data))
+	return err
 }
 
 func (p *Packager) addFile(zw *zip.Writer, sourcePath, entryName string, info os.FileInfo) error {

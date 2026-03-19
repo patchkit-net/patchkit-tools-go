@@ -1,5 +1,7 @@
 package native
 
+import "io"
+
 // DeltaAlgorithm specifies which delta algorithm to use.
 type DeltaAlgorithm string
 
@@ -13,8 +15,12 @@ type Rsync interface {
 	// Signature generates a librsync signature for the given file.
 	Signature(filePath, sigOutputPath string, blockLen int) error
 
-	// Delta generates a delta from a signature and new file.
+	// Delta generates a delta from a signature and new file, writing to a file.
 	Delta(sigPath, newFilePath, deltaOutputPath string) error
+
+	// DeltaToWriter generates a delta from a signature and new file,
+	// streaming the output to the provided writer instead of a file.
+	DeltaToWriter(sigPath, newFilePath string, out io.Writer) error
 }
 
 // TurboPatch provides turbopatch delta operations.
