@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -158,6 +159,70 @@ func TestClient_Get_contextCancellation(t *testing.T) {
 	err := c.Get(ctx, "1/test", nil)
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
+	}
+}
+
+func TestClient_GetStream_noClientTimeout(t *testing.T) {
+	// Simulate a slow download that takes longer than the HTTP client timeout.
+	// GetStream should use a dedicated client with no timeout so that large
+	// downloads (like signatures) are not cut short.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(200)
+		// Write first chunk immediately
+		w.Write([]byte("chunk1"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Pause longer than the client timeout
+		time.Sleep(150 * time.Millisecond)
+		// Write second chunk
+		w.Write([]byte("chunk2"))
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "testkey")
+	// Set a very short client timeout to trigger the bug quickly
+	c.HTTPClient.Timeout = 100 * time.Millisecond
+
+	var buf bytes.Buffer
+	err := c.GetStream(context.Background(), server.URL+"/download", nil, &buf, nil)
+	if err != nil {
+		t.Fatalf("GetStream() should not timeout on slow downloads, got: %v", err)
+	}
+	got := buf.String()
+	if got != "chunk1chunk2" {
+		t.Errorf("GetStream() body = %q, want %q", got, "chunk1chunk2")
+	}
+}
+
+func TestClient_GetStream_respectsContextCancellation(t *testing.T) {
+	// Even though GetStream uses a no-timeout client, it must still respect
+	// context cancellation so callers can abort downloads.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(200)
+		w.Write([]byte("start"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Keep the connection open longer than the context will allow
+		time.Sleep(500 * time.Millisecond)
+		w.Write([]byte("end"))
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	c := NewClient(server.URL, "testkey")
+	// Remove client timeout so only context controls cancellation
+	c.HTTPClient.Timeout = 0
+
+	var buf bytes.Buffer
+	err := c.GetStream(ctx, server.URL+"/download", nil, &buf, nil)
+	if err == nil {
+		t.Fatal("GetStream() should fail when context is cancelled")
 	}
 }
 

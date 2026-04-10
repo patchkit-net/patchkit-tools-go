@@ -135,6 +135,8 @@ func (c *Client) GetRaw(ctx context.Context, path string) ([]byte, error) {
 }
 
 // GetStream performs a GET request and streams the response body to the writer.
+// Uses a dedicated HTTP client with no timeout to support large downloads;
+// cancellation is handled via the context.
 func (c *Client) GetStream(ctx context.Context, rawURL string, headers map[string]string, w io.Writer, progressFn func(bytesRead int64)) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
 	if err != nil {
@@ -146,7 +148,9 @@ func (c *Client) GetStream(ctx context.Context, rawURL string, headers map[strin
 
 	c.debugf("GET %s", rawURL)
 
-	resp, err := c.HTTPClient.Do(req)
+	// Use a client with no timeout for streaming downloads; context handles cancellation.
+	streamClient := &http.Client{}
+	resp, err := streamClient.Do(req)
 	if err != nil {
 		return &NetworkError{Err: err, URL: rawURL}
 	}
