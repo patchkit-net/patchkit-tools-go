@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-patchkit-tools-go is a Go CLI (`pkt`) for managing PatchKit app versions — creating, uploading, diffing, and publishing game/app updates via the PatchKit API (`api.patchkit.net`). It is the Go rewrite of the Ruby patchkit-tools.
+patchkit-tools-go is a Go CLI (`pkt`) for managing PatchKit app versions — creating, uploading, diffing, and publishing game/app updates via the PatchKit API. It is the Go rewrite of the Ruby patchkit-tools.
 
 ## Building and Testing
 
@@ -62,4 +62,4 @@ The release workflow (`.github/workflows/release.yml`) runs on `v*` tags: cross-
 
 ## Test Accounts
 
-Test credentials are stored in SOT (`patchkit.documentation`, record #53 REDACTED). Use the Windows gzip test app (`REDACTED_APP_SECRET`) with API key `REDACTED_API_KEY` for integration testing.
+Test credentials for integration testing are stored in SOT (`patchkit.documentation`, record #53).
