@@ -4,7 +4,25 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/spf13/viper"
 )
+
+func TestDefaultLockTimeout(t *testing.T) {
+	if DefaultLockTimeout != 3*time.Hour {
+		t.Errorf("DefaultLockTimeout = %v, want %v", DefaultLockTimeout, 3*time.Hour)
+	}
+}
+
+func TestSetDefaults_LockTimeout(t *testing.T) {
+	viper.Reset()
+	SetDefaults()
+	got := viper.GetDuration("lock_timeout")
+	if got != 3*time.Hour {
+		t.Errorf("viper default lock_timeout = %v, want %v", got, 3*time.Hour)
+	}
+}
 
 func TestReadChangelog_inline(t *testing.T) {
 	text, err := ReadChangelog("Fixed login bug")

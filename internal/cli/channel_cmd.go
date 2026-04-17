@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"time"
-
 	"github.com/spf13/cobra"
 
 	"github.com/patchkit-net/patchkit-tools-go/internal/config"
@@ -64,11 +62,10 @@ Resolves the group version, creates a draft, links it, and optionally publishes.
 			overwrite, _ := cmd.Flags().GetBool("overwrite-draft")
 			publish, _ := cmd.Flags().GetBool("publish")
 			wait, _ := cmd.Flags().GetBool("wait")
-			lockTimeoutStr, _ := cmd.Flags().GetString("lock-timeout")
 
-			lockTimeout, err := time.ParseDuration(lockTimeoutStr)
+			lockTimeout, err := resolveLockTimeout(cmd, ac.cfg)
 			if err != nil {
-				ac.out.Error(errorf("invalid --lock-timeout: %v", err), "")
+				ac.out.Error(err, "")
 				return exitError(exitcode.InvalidArguments)
 			}
 
@@ -126,7 +123,7 @@ Resolves the group version, creates a draft, links it, and optionally publishes.
 	cmd.Flags().Bool("overwrite-draft", false, "Overwrite existing draft")
 	cmd.Flags().BoolP("publish", "p", false, "Publish when done")
 	cmd.Flags().BoolP("wait", "w", false, "Wait for publish (implies --publish)")
-	cmd.Flags().String("lock-timeout", "30m", "Max time to wait for global lock")
+	cmd.Flags().String("lock-timeout", config.DefaultLockTimeout.String(), "Max time to wait for global lock")
 	return cmd
 }
 

@@ -1,10 +1,9 @@
 package cli
 
 import (
-	"time"
-
 	"github.com/spf13/cobra"
 
+	"github.com/patchkit-net/patchkit-tools-go/internal/config"
 	"github.com/patchkit-net/patchkit-tools-go/internal/exitcode"
 	"github.com/patchkit-net/patchkit-tools-go/internal/lock"
 )
@@ -40,6 +39,12 @@ func newVersionImportCmd() *cobra.Command {
 			publish, _ := cmd.Flags().GetBool("publish")
 			wait, _ := cmd.Flags().GetBool("wait")
 			skipProcess, _ := cmd.Flags().GetBool("skip-processing")
+
+			lockTimeout, err := resolveLockTimeout(cmd, ac.cfg)
+			if err != nil {
+				ac.out.Error(err, "")
+				return exitError(exitcode.InvalidArguments)
+			}
 
 			if fromApp == "" {
 				ac.out.Error(errorf("--from-app is required"), "")
@@ -81,7 +86,7 @@ func newVersionImportCmd() *cobra.Command {
 
 			// Acquire lock
 			ac.out.Info("Acquiring lock...")
-			gl, err := lock.AcquireForApp(ac.ctx, ac.client, appSecret, 30*time.Minute, func(msg string) {
+			gl, err := lock.AcquireForApp(ac.ctx, ac.client, appSecret, lockTimeout, func(msg string) {
 				ac.out.Info(msg)
 			})
 			if err != nil {
@@ -200,5 +205,6 @@ func newVersionImportCmd() *cobra.Command {
 	cmd.Flags().BoolP("publish", "p", false, "Publish after import")
 	cmd.Flags().BoolP("wait", "w", false, "Wait for publish (implies --publish)")
 	cmd.Flags().Bool("skip-processing", false, "Don't wait for server processing")
+	cmd.Flags().String("lock-timeout", config.DefaultLockTimeout.String(), "Max time to wait for global lock")
 	return cmd
 }

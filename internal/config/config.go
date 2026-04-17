@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/viper"
 )
 
+const DefaultLockTimeout = 3 * time.Hour
+
 type Config struct {
 	APIKey        string        `mapstructure:"api_key"`
 	APIURL        string        `mapstructure:"api_url"`
@@ -60,7 +62,7 @@ func SetDefaults() {
 	viper.SetDefault("debug", false)
 	viper.SetDefault("diff_threads", 4)
 	viper.SetDefault("upload_retries", 5)
-	viper.SetDefault("lock_timeout", 30*time.Minute)
+	viper.SetDefault("lock_timeout", DefaultLockTimeout)
 }
 
 func BindEnvVars() {

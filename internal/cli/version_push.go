@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"time"
-
 	"github.com/spf13/cobra"
 
 	"github.com/patchkit-net/patchkit-tools-go/internal/config"
@@ -59,11 +57,10 @@ waits for server processing, and optionally publishes.`,
 			overwrite, _ := cmd.Flags().GetBool("overwrite-draft")
 			skipProcess, _ := cmd.Flags().GetBool("skip-processing")
 			retries, _ := cmd.Flags().GetInt("retries")
-			lockTimeoutStr, _ := cmd.Flags().GetString("lock-timeout")
 
-			lockTimeout, err := time.ParseDuration(lockTimeoutStr)
+			lockTimeout, err := resolveLockTimeout(cmd, ac.cfg)
 			if err != nil {
-				ac.out.Error(errorf("invalid --lock-timeout: %v", err), "")
+				ac.out.Error(err, "")
 				return exitError(exitcode.InvalidArguments)
 			}
 
@@ -116,6 +113,6 @@ waits for server processing, and optionally publishes.`,
 	cmd.Flags().Bool("overwrite-draft", false, "Overwrite existing draft")
 	cmd.Flags().Bool("skip-processing", false, "Don't wait for server processing")
 	cmd.Flags().Int("retries", 5, "Total upload attempts including initial")
-	cmd.Flags().String("lock-timeout", "30m", "Max time to wait for global lock")
+	cmd.Flags().String("lock-timeout", config.DefaultLockTimeout.String(), "Max time to wait for global lock")
 	return cmd
 }
