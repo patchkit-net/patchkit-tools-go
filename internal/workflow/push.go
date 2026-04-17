@@ -147,6 +147,15 @@ func Push(ctx context.Context, cfg *PushConfig, statusFn StatusFn) (*PushResult,
 		status(fmt.Sprintf("Mode: %s (auto-detected)", mode))
 	}
 
+	// First-version fallback: diff modes need a previous published version to
+	// generate a patch against. When the caller pinned a diff mode in CI but
+	// this is the app's initial push, silently downgrade to content instead of
+	// erroring out — the first version is always a full upload anyway.
+	if isDiffMode(mode) && !hasPublishedVersion(versions) {
+		status(fmt.Sprintf("No previous published version — falling back from %s to content mode", mode))
+		mode = "content"
+	}
+
 	// For pack1 modes (diff-encrypted, diff-fast), set publish_when_processed
 	// before uploading, since the server auto-publishes after processing
 	encrypted := mode == "diff-encrypted" || mode == "diff-fast"
@@ -258,12 +267,23 @@ func Push(ctx context.Context, cfg *PushConfig, statusFn StatusFn) (*PushResult,
 }
 
 func detectMode(versions []api.Version) string {
-	for _, v := range versions {
-		if !v.Draft {
-			return "diff"
-		}
+	if hasPublishedVersion(versions) {
+		return "diff"
 	}
 	return "content"
+}
+
+func hasPublishedVersion(versions []api.Version) bool {
+	for _, v := range versions {
+		if !v.Draft {
+			return true
+		}
+	}
+	return false
+}
+
+func isDiffMode(mode string) bool {
+	return mode == "diff" || mode == "diff-encrypted" || mode == "diff-fast"
 }
 
 func pushContent(ctx context.Context, cfg *PushConfig, versionID int, tmpDir string, statusFn StatusFn) (string, error) {

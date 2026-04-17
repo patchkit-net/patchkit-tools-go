@@ -123,3 +123,104 @@ func TestPush_allowsNonChannelApp(t *testing.T) {
 		t.Errorf("non-channel app was blocked by channel check: %v", err)
 	}
 }
+
+// newVersionAwareTestServer extends newTestServer to return the given version
+// list from GET /1/apps/:secret/versions, so the workflow can reach mode
+// detection without crashing earlier.
+func newVersionAwareTestServer(app api.App, versions []api.Version) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/versions"):
+			json.NewEncoder(w).Encode(versions)
+
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/1/apps/") && !strings.Contains(r.URL.Path, "/versions"):
+			json.NewEncoder(w).Encode(app)
+
+		case r.Method == "POST" && r.URL.Path == "/1/global_locks/acquire":
+			json.NewEncoder(w).Encode(api.GlobalLock{Status: "allow"})
+
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/versions"):
+			json.NewEncoder(w).Encode(map[string]int{"id": 999})
+
+		default:
+			// 400 to stop the workflow before it tries actual uploads
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]string{"message": "mock: not implemented"})
+		}
+	}))
+}
+
+// When the caller pins a diff mode but the app has no previously published
+// version, the workflow must fall back to content mode instead of failing with
+// "no previous published version found for diff mode".
+func TestPush_fallsBackToContentOnFirstVersion(t *testing.T) {
+	server := newVersionAwareTestServer(
+		api.App{ID: 1, Name: "Fresh app", IsChannel: false},
+		[]api.Version{}, // no versions yet — first push
+	)
+	defer server.Close()
+
+	client := api.NewClient(server.URL, "testkey")
+	client.RetryPause = time.Millisecond
+
+	for _, mode := range []string{"diff", "diff-encrypted", "diff-fast"} {
+		t.Run(mode, func(t *testing.T) {
+			var messages []string
+			_, _ = Push(context.Background(), &PushConfig{
+				Client:      client,
+				AppSecret:   "fresh-secret",
+				Label:       "1.0.0",
+				FilesDir:    t.TempDir(),
+				Mode:        mode,
+				LockTimeout: 5 * time.Second,
+			}, func(msg string) { messages = append(messages, msg) })
+
+			fallbackSeen := false
+			for _, m := range messages {
+				if strings.Contains(m, "falling back from "+mode+" to content mode") {
+					fallbackSeen = true
+					break
+				}
+			}
+			if !fallbackSeen {
+				t.Errorf("expected fallback status message for mode=%s, got: %v", mode, messages)
+			}
+			for _, m := range messages {
+				if strings.Contains(m, "Setting publish_when_processed") {
+					t.Errorf("publish_when_processed must not be set after fallback to content (mode=%s)", mode)
+				}
+			}
+		})
+	}
+}
+
+// If the app already has a published version, a pinned diff mode should be
+// respected (no fallback).
+func TestPush_keepsDiffModeWhenPublishedVersionExists(t *testing.T) {
+	server := newVersionAwareTestServer(
+		api.App{ID: 1, Name: "App", IsChannel: false},
+		[]api.Version{{ID: 1, Draft: false, Published: true}},
+	)
+	defer server.Close()
+
+	client := api.NewClient(server.URL, "testkey")
+	client.RetryPause = time.Millisecond
+
+	var messages []string
+	_, _ = Push(context.Background(), &PushConfig{
+		Client:      client,
+		AppSecret:   "secret",
+		Label:       "1.0.1",
+		FilesDir:    t.TempDir(),
+		Mode:        "diff-fast",
+		LockTimeout: 5 * time.Second,
+	}, func(msg string) { messages = append(messages, msg) })
+
+	for _, m := range messages {
+		if strings.Contains(m, "falling back") {
+			t.Errorf("fallback fired unexpectedly when a published version exists; messages=%v", messages)
+		}
+	}
+}
