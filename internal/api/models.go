@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 )
@@ -14,6 +15,15 @@ type IntOrFalse struct {
 }
 
 func (f *IntOrFalse) UnmarshalJSON(data []byte) error {
+	// JSON null means "no version" — same semantics as false.
+	// This check is required because Go's encoding/json treats null into a
+	// non-pointer int as a no-op (nil error, value untouched), which would
+	// otherwise misread "processing_version": null as Set=true, Value=0.
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		f.Value = 0
+		f.Set = false
+		return nil
+	}
 	// Try int first
 	var i int
 	if err := json.Unmarshal(data, &i); err == nil {
